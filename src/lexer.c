@@ -87,6 +87,7 @@ prairie_token_t *prairie_lex(char *raw_file, int raw_file_length) {
         ctx->state = PRAIRIE_LS_FIELD_NAME;
         break;
       }
+      __attribute__((fallthrough));
     case ' ':
       if (ctx->state == PRAIRIE_LS_METHOD) {
         pop_acc(ctx, PRAIRIE_TOKEN_IDENTIFIER);
@@ -98,6 +99,7 @@ prairie_token_t *prairie_lex(char *raw_file, int raw_file_length) {
         ctx->state = PRAIRIE_LS_PROTOCOL;
         break;
       }
+      __attribute__((fallthrough));
     case ':':
       if (ctx->state == PRAIRIE_LS_FIELD_NAME) {
         i++;
@@ -106,7 +108,8 @@ prairie_token_t *prairie_lex(char *raw_file, int raw_file_length) {
         ctx->state = PRAIRIE_LS_FIELD_VALUE;
         break;
       }
-    default:
+      __attribute__((fallthrough));
+    default: {
       int acc_length = strlen(ctx->acc);
       char *tmp = realloc(ctx->acc, acc_length + 2);
       if (!tmp) {
@@ -117,7 +120,8 @@ prairie_token_t *prairie_lex(char *raw_file, int raw_file_length) {
       ctx->acc = tmp;
       ctx->acc[acc_length] = raw_file[i];
       ctx->acc[acc_length + 1] = '\0';
-      break;
+
+    } break;
     }
   }
 
@@ -127,4 +131,15 @@ prairie_token_t *prairie_lex(char *raw_file, int raw_file_length) {
   prairie_token_t *start = ctx->token_start;
   free(ctx);
   return start;
+}
+
+void prairie_token_destroy(prairie_token_t *token_start) {
+  prairie_token_t *token = token_start;
+
+  while (token != NULL) {
+    prairie_token_t *next = token->next;
+    free(token);
+
+    token = next;
+  }
 }
