@@ -7,14 +7,14 @@
 #include <prairie/parser.h>
 #include <prairie/utils.h>
 
-void advance(ParserContext *ctx) {
+void advance(prairie_parser_ctx_t *ctx) {
   ctx->current_token = ctx->current_token->next;
 }
 
 /**
  * Returns true if the assertion passes
  */
-bool assert(ParserContext *ctx, prairie_token_type_t type) {
+bool assert(prairie_parser_ctx_t *ctx, prairie_token_type_t type) {
   if (ctx->current_token->type != type) {
     printf("unexpected token, expected %s, found %s\n",
            prairie_token_type_to_string(type),
@@ -24,7 +24,7 @@ bool assert(ParserContext *ctx, prairie_token_type_t type) {
   return true;
 }
 
-bool assert_advance(ParserContext *ctx, prairie_token_type_t type) {
+bool assert_advance(prairie_parser_ctx_t *ctx, prairie_token_type_t type) {
   if (assert(ctx, type)) {
     advance(ctx);
     return true;
@@ -58,45 +58,45 @@ prairie_protocol_t string_to_protocol(char *value) {
   {                                                                            \
     printf("Error occured\n");                                                 \
     free(ctx);                                                                 \
-    free(response);                                                            \
+    free(request);                                                             \
     return NULL;                                                               \
   }
 
-void prairie_print_response(prairie_response_t *response) {
-  printf("%d %s %d\n", response->method, response->route, response->protocol);
-  prairie_header_t *header = response->header_start;
+void prairie_print_request(prairie_request_t *request) {
+  printf("%d %s %d\n", request->method, request->route, request->protocol);
+  prairie_header_t *header = request->header_start;
   while (header != NULL) {
     printf("%s: %s\n", header->key, header->value);
     header = header->next;
   }
-  printf("%s\n", response->body);
+  printf("%s\n", request->body);
 }
 
-prairie_response_t *prairie_parse(prairie_token_t *token_start) {
-  prairie_response_t *response = malloc(sizeof(prairie_response_t));
-  ParserContext *ctx = malloc(sizeof(ParserContext));
+prairie_request_t *prairie_parse_request(prairie_token_t *token_start) {
+  prairie_request_t *request = malloc(sizeof(prairie_request_t));
+  prairie_parser_ctx_t *ctx = malloc(sizeof(prairie_parser_ctx_t));
   ctx->current_token = token_start;
-  ctx->response = response;
+  ctx->request = request;
 
   if (!assert(ctx, PRAIRIE_TOKEN_IDENTIFIER))
     free_and_return;
 
   // printf("method: %s\n", ctx->current_token->lexeme);
-  ctx->response->method = string_to_method(ctx->current_token->lexeme);
+  ctx->request->method = string_to_method(ctx->current_token->lexeme);
   advance(ctx);
 
   if (!assert(ctx, PRAIRIE_TOKEN_IDENTIFIER))
     free_and_return;
 
   // printf("route: %s\n", ctx->current_token->lexeme);
-  ctx->response->route = ctx->current_token->lexeme;
+  ctx->request->route = ctx->current_token->lexeme;
   advance(ctx);
 
   if (!assert(ctx, PRAIRIE_TOKEN_IDENTIFIER))
     free_and_return;
 
   // printf("protocol: %s\n", ctx->current_token->lexeme);
-  ctx->response->protocol = string_to_protocol(ctx->current_token->lexeme);
+  ctx->request->protocol = string_to_protocol(ctx->current_token->lexeme);
   advance(ctx);
 
   while (ctx->current_token != NULL) {
@@ -111,19 +111,19 @@ prairie_response_t *prairie_parse(prairie_token_t *token_start) {
 
       header->value = ctx->current_token->lexeme;
 
-      if (ctx->response->header_start == NULL) {
-        ctx->response->header_start = header;
-        ctx->response->header_end = header;
+      if (ctx->request->header_start == NULL) {
+        ctx->request->header_start = header;
+        ctx->request->header_end = header;
       } else {
-        ctx->response->header_end->next = header;
-        ctx->response->header_end = header;
+        ctx->request->header_end->next = header;
+        ctx->request->header_end = header;
       }
       advance(ctx);
     } else if (ctx->current_token->type == PRAIRIE_TOKEN_BODY) {
-      ctx->response->body = ctx->current_token->lexeme;
+      ctx->request->body = ctx->current_token->lexeme;
       free(ctx);
 
-      return response;
+      return request;
     } else {
       printf("unexpected token. expected identifier or body, found %s\n",
              prairie_token_to_string(ctx->current_token));
@@ -132,5 +132,5 @@ prairie_response_t *prairie_parse(prairie_token_t *token_start) {
   }
 
   free(ctx);
-  return response;
+  return request;
 }

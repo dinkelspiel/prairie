@@ -13,6 +13,6 @@ Usage
 
 Include the 'prairie/prairie.h' header file.
 
-* Parsing an http response
+* Parsing an http request
 
-Response *response = prairie_make_respones(raw_response, raw_response_length);
+request *request = prairie_make_respones(raw_request, raw_request_length);

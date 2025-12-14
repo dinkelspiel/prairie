@@ -20,14 +20,14 @@ typedef struct {
   char *body;
   prairie_header_t *header_start;
   prairie_header_t *header_end;
-} prairie_response_t;
+} prairie_request_t;
 
 typedef struct {
   prairie_token_t *current_token;
-  prairie_response_t *response;
-} ParserContext;
+  prairie_request_t *request;
+} prairie_parser_ctx_t;
 
-prairie_response_t *prairie_parse(prairie_token_t *token_start);
-void prairie_print_response(prairie_response_t *response);
+prairie_request_t *prairie_parse_request(prairie_token_t *token_start);
+void prairie_print_request(prairie_request_t *request);
 
 #endif
