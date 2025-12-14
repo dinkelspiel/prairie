@@ -1,4 +1,15 @@
-prairie
-=========
+# prairie
 
 A small lightweight http server library in c.
+
+## Install
+
+Run `make install` then you can include the library using the -lprairie flag.
+
+## Usage
+
+Include the `prairie/prairie.h` header file.
+
+- Parsing an http response
+
+Response \*response = prairie_make_respones(raw_response, raw_response_length);
