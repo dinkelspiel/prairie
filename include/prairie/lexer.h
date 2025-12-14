@@ -36,5 +36,6 @@ void prairie_print_token(prairie_token_t *token);
 void prairie_print_tokens(prairie_token_t *token);
 char *prairie_token_to_string(prairie_token_t *token);
 char *prairie_token_type_to_string(prairie_token_type_t type);
+void prairie_token_destroy(prairie_token_t *token_start);
 
 #endif

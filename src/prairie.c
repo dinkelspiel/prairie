@@ -7,6 +7,7 @@ prairie_request_t *prairie_request_create(char *raw, int length) {
   //   print_tokens(token);
 
   prairie_request_t *request = prairie_parse_request(token);
+  prairie_token_destroy(token);
   //   print_response(response);
   return request;
 }
