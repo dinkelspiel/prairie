@@ -1,5 +1,4 @@
-#load "prairie.jai";
-#load "router.jai";
+#load "module.jai";
 
 #import "Basic";
 
