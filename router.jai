@@ -1,4 +1,5 @@
 #import "Basic";
+#import "String"; 
 
 Middleware_Status :: enum {
     NEXT;
@@ -57,7 +58,7 @@ route_request :: (request: Http_Request) -> Http_Response {
 
     for index: 0..router.route_count-1 {
         route := *router.routes[index];
-        if route.path != request.route || route.method != request.method continue;
+        if route.path != split(request.route, "?")[0] || route.method != request.method continue;
 
         for middleware_index: 0..route.middleware_count-1 {
             result := route.middlewares[middleware_index](request);
@@ -67,7 +68,7 @@ route_request :: (request: Http_Request) -> Http_Response {
         return route.handler(request);
     }
 
-    return .{status_code = 404};
+    return .{status_code = 404, content_type = .TEXT_HTML, body = "Not Found"};
 }
 
 add_route :: (router: *Router, path: string, method: Http_Method, handler: Request_Handler) {
@@ -85,6 +86,10 @@ add_route :: (router: *Router, path: string, method: Http_Method, handler: Reque
 
 get :: (router: *Router, path: string, handler: Request_Handler) {
     add_route(router, path, .GET, handler);
+}
+
+post :: (router: *Router, path: string, handler: Request_Handler) {
+    add_route(router, path, .POST, handler);
 }
 
 middleware :: (router: *Router, routes: Route_Group, middlewares: .. Middleware_Handler) {

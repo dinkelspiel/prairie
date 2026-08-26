@@ -1,5 +1,6 @@
 #import "Basic";
 #import "Socket";
+#import "Hash_Table";
 
 Prairie :: struct {
     socket: Socket;
@@ -8,11 +9,13 @@ Prairie :: struct {
 }
 
 Http_Method :: enum {
+    UNKNOWN;
     GET;
     POST;
 }
 
 Http_Protocol :: enum {
+    UNKNOWN;
     HTTP_1_0;
     HTTP_1_1;
     HTTP_2;
@@ -21,9 +24,10 @@ Http_Protocol :: enum {
 Content_Type :: enum {
     TEXT_HTML;
     APPLICATION_JSON;
+    APPLICATION_OCTET_STREAM;
 }
 
-MAX_REQUEST_SIZE :: 16 * 1024;
+MAX_REQUEST_SIZE :: 16 * 1024 * 1024;
 MAX_RESPONSE_BODY_SIZE :: 64 * 1024 * 1024;
 SOCKET_TIMEOUT_SECONDS :: 5;
 
@@ -44,12 +48,15 @@ Http_Request :: struct {
     headers: [64] Http_Header_Field;
     header_count: s64;
     body: string;
+    query_params: Table(string, string);
+    form_fields: Table(string, string);
 }
 
 Http_Response :: struct {
     status_code: int;
     content_type: Content_Type;
     body: string;
+    owned_body: bool;
 }
 
 Request_Handler :: #type (request: Http_Request) -> Http_Response;
@@ -99,9 +106,17 @@ handle_client :: (client: Socket, source: sockaddr_in, handler: Request_Handler)
 
     if !set_socket_timeouts(client) return;
 
-    buffer: [MAX_REQUEST_SIZE] u8;
+    buffer := alloc_string(MAX_REQUEST_SIZE);
+    defer free(buffer);
     request, ok := receive_request(client, buffer);
+    defer deinit(*request.query_params);
+    defer deinit(*request.form_fields);
+
+    source_text := to_string(source);
+    defer free(source_text);
+
     if !ok {
+        print("400 | % | % %\n", source_text, request.method, request.route);
         write_response(client, .{status_code = 400, content_type = .TEXT_HTML, body = "Bad Request"});
         return;
     }
@@ -110,9 +125,8 @@ handle_client :: (client: Socket, source: sockaddr_in, handler: Request_Handler)
     response := handler(request);
     response = sanitize_response(response);
     if !write_response(client, response) print("Send error: %\n", get_last_socket_error());
+    if response.owned_body free(response.body);
 
-    source_text := to_string(source);
-    defer free(source_text);
     duration_ms := (seconds_since_init() - started_at) * 1000.0;
     print("% | % ms | % | % %\n", response.status_code, duration_ms, source_text, request.method, request.route);
 }
@@ -131,7 +145,7 @@ set_socket_timeouts :: (socket_handle: Socket) -> bool {
     return receive_result != SOCKET_ERROR && send_result != SOCKET_ERROR;
 }
 
-receive_request :: (client: Socket, buffer: [] u8) -> Http_Request, bool {
+receive_request :: (client: Socket, buffer: string) -> Http_Request, bool {
     bytes_read: s64;
     header_end: s64 = -1;
 
@@ -149,27 +163,30 @@ receive_request :: (client: Socket, buffer: [] u8) -> Http_Request, bool {
     contents := string_from_bytes(buffer, bytes_read);
     body_start := header_end + 4;
     request, ok := make_request(substring(contents, 0, body_start));
-    if !ok return .{}, false;
+    if !ok return request, false;
 
     body_length, framing_ok := request_body_length(request);
-    if !framing_ok return .{}, false;
-    if body_length > buffer.count - body_start return .{}, false;
+    if !framing_ok return request, false;
+    if body_length > buffer.count - body_start return request, false;
 
     total_length := body_start + body_length;
     while bytes_read < total_length {
         received := recv(client, buffer.data + bytes_read, cast(u64) (total_length - bytes_read), cast(MSG) 0);
-        if received <= 0 return .{}, false;
+        if received <= 0 return request, false;
         bytes_read += received;
     }
 
-    if bytes_read != total_length return .{}, false;
+    if bytes_read < total_length return request, false;
 
-    contents = string_from_bytes(buffer, bytes_read);
+    contents = string_from_bytes(buffer, total_length);
     request.body = substring(contents, body_start, total_length);
+    if request.method == .POST && request_has_content_type(request, "application/x-www-form-urlencoded") {
+        request.form_fields = parse_http_form_fields(request.body);
+    }
     return request, true;
 }
 
-string_from_bytes :: (buffer: [] u8, count: s64) -> string {
+string_from_bytes :: (buffer: string, count: s64) -> string {
     result: string;
     result.data = buffer.data;
     result.count = count;
@@ -211,6 +228,7 @@ send_all :: (socket_handle: Socket, data: string) -> bool {
 status_text :: (status_code: int) -> string {
     if status_code == 200 return "OK";
     if status_code == 400 return "Bad Request";
+    if status_code == 401 return "Unauthorized";
     if status_code == 408 return "Request Timeout";
     if status_code == 404 return "Not Found";
     if status_code == 413 return "Content Too Large";
@@ -232,21 +250,24 @@ make_request :: (contents: string) -> Http_Request, bool {
     if first_line_end < 0 return .{}, false;
 
     request, ok := parse_http_request_line(substring(contents, 0, first_line_end));
-    if !ok return .{}, false;
+    if !ok return request, false;
 
     cursor := first_line_end + 2;
     while cursor <= contents.count {
         line_end := find_sequence(contents, "\r\n", cursor);
         if line_end < 0 line_end = contents.count;
-        if line_end == cursor return request, true;
-        if request.header_count == request.headers.count return .{}, false;
+        if line_end == cursor {
+            request.query_params = parse_http_query_params(request.route);
+            return request, true;
+        }
+        if request.header_count == request.headers.count return request, false;
 
         line := substring(contents, cursor, line_end);
         colon := find_byte(line, #char ":", 0);
-        if colon <= 0 return .{}, false;
+        if colon <= 0 return request, false;
 
         key := substring(line, 0, colon);
-        if !valid_header_name(key) return .{}, false;
+        if !valid_header_name(key) return request, false;
 
         value_start := colon + 1;
         while value_start < line.count && is_optional_whitespace(line[value_start]) value_start += 1;
@@ -254,7 +275,7 @@ make_request :: (contents: string) -> Http_Request, bool {
         while value_end > value_start && is_optional_whitespace(line[value_end - 1]) value_end -= 1;
 
         value := substring(line, value_start, value_end);
-        if !valid_header_value(value) return .{}, false;
+        if !valid_header_value(value) return request, false;
 
         request.headers[request.header_count] = .{
             key = key,
@@ -270,39 +291,84 @@ make_request :: (contents: string) -> Http_Request, bool {
         host_count: s64;
         for index: 0..request.header_count-1 {
             if equal_ascii_case_insensitive(request.headers[index].key, "Host") {
-                if request.headers[index].value.count == 0 return .{}, false;
+                if request.headers[index].value.count == 0 return request, false;
                 host_count += 1;
             }
         }
-        if host_count != 1 return .{}, false;
+        if host_count != 1 return request, false;
     }
+
+    request.query_params = parse_http_query_params(request.route);
 
     return request, true;
 }
 
+parse_http_query_params :: (route: string) -> Table(string, string) {
+    split_route        := split(route, "?");
+    if split_route.count == 1 return .{};
+    
+    after_questionmark := split_route[1];
+    return parse_http_fields(after_questionmark);
+}
+
+parse_http_form_fields :: (body: string) -> Table(string, string) {
+    return parse_http_fields(body);
+}
+
+parse_http_fields :: (contents: string) -> Table(string, string) {
+    fields: Table(string, string);
+    if contents.count == 0 return fields;
+
+    raw_fields := split(contents, "&");
+
+    for raw_fields {
+        separator := find_byte(it, #char "=", 0);
+        if separator < 0 continue;
+
+        key := substring(it, 0, separator);
+        value := substring(it, separator + 1, it.count);
+        table_set(*fields, key, value);
+    }
+
+    return fields;
+}
+
+request_has_content_type :: (request: Http_Request, expected: string) -> bool {
+    for index: 0..request.header_count-1 {
+        header := request.headers[index];
+        if !equal_ascii_case_insensitive(header.key, "Content-Type") continue;
+
+        separator := find_byte(header.value, #char ";", 0);
+        value_end := ifx separator < 0 then header.value.count else separator;
+        return equal_ascii_case_insensitive(substring(header.value, 0, value_end), expected);
+    }
+    return false;
+}
+
 parse_http_request_line :: (line: string) -> Http_Request, bool {
+    request: Http_Request;
+
     first_space := find_byte(line, #char " ", 0);
-    if first_space < 0 return .{}, false;
+    if first_space < 0 return request, false;
 
     second_space := find_byte(line, #char " ", first_space + 1);
-    if second_space < 0 return .{}, false;
-    if find_byte(line, #char " ", second_space + 1) >= 0 return .{}, false;
+    if second_space < 0 return request, false;
+
+    request.route = substring(line, first_space + 1, second_space);
+    if find_byte(line, #char " ", second_space + 1) >= 0 return request, false;
 
     method_text := substring(line, 0, first_space);
-    route := substring(line, first_space + 1, second_space);
     protocol_text := substring(line, second_space + 1, line.count);
 
-    method: Http_Method;
-    if method_text == "GET" method = .GET;
-    else if method_text == "POST" method = .POST;
-    else return .{}, false;
+    if method_text == "GET" request.method = .GET;
+    else if method_text == "POST" request.method = .POST;
+    else return request, false;
 
-    protocol: Http_Protocol;
-    if protocol_text == "HTTP/1.0" protocol = .HTTP_1_0;
-    else if protocol_text == "HTTP/1.1" protocol = .HTTP_1_1;
-    else return .{}, false;
+    if protocol_text == "HTTP/1.0" request.protocol = .HTTP_1_0;
+    else if protocol_text == "HTTP/1.1" request.protocol = .HTTP_1_1;
+    else return request, false;
 
-    return .{method = method, route = route, protocol = protocol}, true;
+    return request, true;
 }
 
 request_body_length :: (request: Http_Request) -> s64, bool {
@@ -315,7 +381,8 @@ request_body_length :: (request: Http_Request) -> s64, bool {
         if !equal_ascii_case_insensitive(header.key, "Content-Length") continue;
         if has_content_length return 0, false;
 
-        content_length, ok := parse_nonnegative_decimal(header.value);
+        ok: bool;
+        content_length, ok = parse_nonnegative_decimal(header.value);
         if !ok return 0, false;
         has_content_length = true;
     }
