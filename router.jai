@@ -58,7 +58,7 @@ route_request :: (request: Http_Request) -> Http_Response {
 
     for index: 0..router.route_count-1 {
         route := *router.routes[index];
-        if route.path != split(request.route, "?")[0] || route.method != request.method continue;
+        if !route_matches(route.path, split(request.route, "?")[0]) || route.method != request.method continue;
 
         for middleware_index: 0..route.middleware_count-1 {
             result := route.middlewares[middleware_index](request);
@@ -69,6 +69,17 @@ route_request :: (request: Http_Request) -> Http_Response {
     }
 
     return .{status_code = 404, content_type = .TEXT_HTML, body = "Not Found"};
+}
+
+route_matches :: (pattern: string, path: string) -> bool {
+    if pattern == path return true;
+    if !ends_with(pattern, "/:id") return false;
+    prefix := slice(pattern, 0, pattern.count - 3);
+    if !starts_with(path, prefix) || path.count <= prefix.count return false;
+    for index: prefix.count..path.count-1 {
+        if path[index] < #char "0" || path[index] > #char "9" return false;
+    }
+    return true;
 }
 
 add_route :: (router: *Router, path: string, method: Http_Method, handler: Request_Handler) {

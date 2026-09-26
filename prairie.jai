@@ -25,6 +25,7 @@ Content_Type :: enum {
     TEXT_HTML;
     APPLICATION_JSON;
     APPLICATION_OCTET_STREAM;
+    APPLICATION_ZIP;
 }
 
 MAX_REQUEST_SIZE :: 16 * 1024 * 1024;
@@ -57,6 +58,7 @@ Http_Response :: struct {
     content_type: Content_Type;
     body: string;
     owned_body: bool;
+    download_id: s64;
 }
 
 Request_Handler :: #type (request: Http_Request) -> Http_Response;
@@ -201,12 +203,14 @@ sanitize_response :: (response: Http_Response) -> Http_Response {
 
 write_response :: (client: Socket, response: Http_Response) -> bool {
     safe_response := sanitize_response(response);
+    disposition := ifx safe_response.download_id > 0 then tprint("Content-Disposition: attachment; filename=\"%.zip\"\r\n", safe_response.download_id) else "";
     header := sprint(
-        "HTTP/1.1 % %\r\nContent-Type: %\r\nContent-Length: %\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 % %\r\nContent-Type: %\r\nContent-Length: %\r\n%Connection: close\r\n\r\n",
         safe_response.status_code,
         status_text(safe_response.status_code),
         content_type_to_string(safe_response.content_type),
-        safe_response.body.count
+        safe_response.body.count,
+        disposition
     );
     defer free(header);
 
@@ -227,11 +231,13 @@ send_all :: (socket_handle: Socket, data: string) -> bool {
 
 status_text :: (status_code: int) -> string {
     if status_code == 200 return "OK";
+    if status_code == 201 return "Created";
     if status_code == 400 return "Bad Request";
     if status_code == 401 return "Unauthorized";
     if status_code == 408 return "Request Timeout";
     if status_code == 404 return "Not Found";
     if status_code == 413 return "Content Too Large";
+    if status_code == 415 return "Unsupported Media Type";
     if status_code == 431 return "Request Header Fields Too Large";
     if status_code == 500 return "Internal Server Error";
     return "Status";
@@ -240,6 +246,7 @@ status_text :: (status_code: int) -> string {
 content_type_to_string :: (content_type: Content_Type) -> string {
     if content_type == .TEXT_HTML return "text/html";
     if content_type == .APPLICATION_JSON return "application/json";
+    if content_type == .APPLICATION_ZIP return "application/zip";
     return "application/octet-stream";
 }
 
