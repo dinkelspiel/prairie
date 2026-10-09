@@ -26,6 +26,8 @@ Content_Type :: enum {
     APPLICATION_JSON;
     APPLICATION_OCTET_STREAM;
     APPLICATION_ZIP;
+    IMAGE_SVG;
+    IMAGE_PNG;
 }
 
 MAX_REQUEST_SIZE :: 16 * 1024 * 1024;
@@ -51,6 +53,7 @@ Http_Request :: struct {
     body: string;
     query_params: Table(string, string);
     form_fields: Table(string, string);
+    source_address: u32;
 }
 
 Http_Response :: struct {
@@ -59,6 +62,7 @@ Http_Response :: struct {
     body: string;
     owned_body: bool;
     download_id: s64;
+    location: string;
 }
 
 Request_Handler :: #type (request: Http_Request) -> Http_Response;
@@ -113,6 +117,8 @@ handle_client :: (client: Socket, source: sockaddr_in, handler: Request_Handler)
     request, ok := receive_request(client, buffer);
     defer deinit(*request.query_params);
     defer deinit(*request.form_fields);
+    #if OS == .WINDOWS request.source_address = ntohl(source.sin_addr.S_un.S_addr);
+    else request.source_address = ntohl(source.sin_addr.s_addr);
 
     source_text := to_string(source);
     defer free(source_text);
@@ -204,13 +210,14 @@ sanitize_response :: (response: Http_Response) -> Http_Response {
 write_response :: (client: Socket, response: Http_Response) -> bool {
     safe_response := sanitize_response(response);
     disposition := ifx safe_response.download_id > 0 then tprint("Content-Disposition: attachment; filename=\"%.zip\"\r\n", safe_response.download_id) else "";
+    location := ifx safe_response.location.count && valid_header_value(safe_response.location) then tprint("Location: %\r\n", safe_response.location) else "";
     header := sprint(
         "HTTP/1.1 % %\r\nContent-Type: %\r\nContent-Length: %\r\n%Connection: close\r\n\r\n",
         safe_response.status_code,
         status_text(safe_response.status_code),
         content_type_to_string(safe_response.content_type),
         safe_response.body.count,
-        disposition
+        join(disposition, location,, temp)
     );
     defer free(header);
 
@@ -232,6 +239,7 @@ send_all :: (socket_handle: Socket, data: string) -> bool {
 status_text :: (status_code: int) -> string {
     if status_code == 200 return "OK";
     if status_code == 201 return "Created";
+    if status_code == 302 return "Found";
     if status_code == 400 return "Bad Request";
     if status_code == 401 return "Unauthorized";
     if status_code == 408 return "Request Timeout";
@@ -247,6 +255,8 @@ content_type_to_string :: (content_type: Content_Type) -> string {
     if content_type == .TEXT_HTML return "text/html";
     if content_type == .APPLICATION_JSON return "application/json";
     if content_type == .APPLICATION_ZIP return "application/zip";
+    if content_type == .IMAGE_SVG return "image/svg+xml";
+    if content_type == .IMAGE_PNG return "image/png";
     return "application/octet-stream";
 }
 
