@@ -28,6 +28,7 @@ Content_Type :: enum {
     APPLICATION_ZIP;
     IMAGE_SVG;
     IMAGE_PNG;
+    TEXT_JAVASCRIPT;
 }
 
 MAX_REQUEST_SIZE :: 16 * 1024 * 1024;
@@ -108,6 +109,7 @@ run :: (prairie: Prairie, handler: Request_Handler) {
 }
 
 handle_client :: (client: Socket, source: sockaddr_in, handler: Request_Handler) {
+    defer reset_temporary_storage();
     defer close_and_reset(*client);
 
     if !set_socket_timeouts(client) return;
@@ -257,6 +259,7 @@ content_type_to_string :: (content_type: Content_Type) -> string {
     if content_type == .APPLICATION_ZIP return "application/zip";
     if content_type == .IMAGE_SVG return "image/svg+xml";
     if content_type == .IMAGE_PNG return "image/png";
+    if content_type == .TEXT_JAVASCRIPT return "text/javascript";
     return "application/octet-stream";
 }
 
